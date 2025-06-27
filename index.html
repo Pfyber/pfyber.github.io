@@ -188,84 +188,103 @@
     </div>
   </div>
 
-  <script>
-    const SERVICE_UUID = '19b10000-e8f2-537e-4f6c-d104768a1214';
-    const CONTROL_UUID = '19b10002-e8f2-537e-4f6c-d104768a1214';
-    const STATUS_UUID = '19b10003-e8f2-537e-4f6c-d104768a1214';
+ <script>
+  const SERVICE_UUID = '19b10000-e8f2-537e-4f6c-d104768a1214';
+  const CONTROL_UUID = '19b10002-e8f2-537e-4f6c-d104768a1214';
+  const STATUS_UUID = '19b10003-e8f2-537e-4f6c-d104768a1214';
+  const DISCONNECT_UUID = '19b10004-e8f2-537e-4f6c-d104768a1214';
 
-    let controlChar, statusChar;
-    let direction = 1;
+  let controlChar, statusChar, disconnectChar;
+  let device, server;
+  let direction = 1;
+  let isConnected = false;
 
-    function selectDirection(dir) {
-      direction = dir;
-      document.getElementById('btnForward').classList.remove('active');
-      document.getElementById('btnReverse').classList.remove('active');
-      if (dir === 1) {
-        document.getElementById('btnForward').classList.add('active');
-      } else {
-        document.getElementById('btnReverse').classList.add('active');
+  function selectDirection(dir) {
+    direction = dir;
+    document.getElementById('btnForward').classList.toggle('active', dir === 1);
+    document.getElementById('btnReverse').classList.toggle('active', dir === 0);
+  }
+
+  function adjustValue(fieldId, delta) {
+    const input = document.getElementById(fieldId);
+    let val = parseInt(input.value) || 0;
+    val = Math.max(0, val + delta);
+    input.value = val;
+  }
+
+  async function connectPump() {
+    if (isConnected) {
+      await disconnectPump(); // Če smo že povezani, izvede odklop
+      return;
+    }
+
+    try {
+      device = await navigator.bluetooth.requestDevice({
+        filters: [{ namePrefix: 'LabPumpController' }],
+        optionalServices: [SERVICE_UUID]
+      });
+      server = await device.gatt.connect();
+      const service = await server.getPrimaryService(SERVICE_UUID);
+      controlChar = await service.getCharacteristic(CONTROL_UUID);
+      statusChar = await service.getCharacteristic(STATUS_UUID);
+      disconnectChar = await service.getCharacteristic(DISCONNECT_UUID);
+
+      statusChar.addEventListener('characteristicvaluechanged', handleStatus);
+      await statusChar.startNotifications();
+
+      isConnected = true;
+      updateUI('Connected', 'Idle', '--');
+    } catch (e) {
+      alert("Connection failed: " + e);
+    }
+  }
+
+  async function disconnectPump() {
+    try {
+      if (disconnectChar) {
+        await disconnectChar.writeValue(new TextEncoder().encode("1")); // Pošlji zahtevo po odklopu
       }
-    }
-
-    function adjustValue(fieldId, delta) {
-      const input = document.getElementById(fieldId);
-      let val = parseInt(input.value) || 0;
-      val = Math.max(0, val + delta);
-      input.value = val;
-    }
-
-    async function connectPump() {
-      try {
-        const device = await navigator.bluetooth.requestDevice({
-          filters: [{ namePrefix: 'LabPumpController' }],
-          optionalServices: [SERVICE_UUID]
-        });
-        const server = await device.gatt.connect();
-        const service = await server.getPrimaryService(SERVICE_UUID);
-        controlChar = await service.getCharacteristic(CONTROL_UUID);
-        statusChar = await service.getCharacteristic(STATUS_UUID);
-
-        statusChar.addEventListener('characteristicvaluechanged', handleStatus);
-        await statusChar.startNotifications();
-
-        updateUI('Connected', 'Idle', '--');
-      } catch (e) {
-        alert("Connection failed: " + e);
+      if (device && device.gatt.connected) {
+        await device.gatt.disconnect();
       }
+    } catch (e) {
+      console.error("Disconnect failed:", e);
     }
 
-    async function startPump() {
-      const speed = parseInt(document.getElementById("speed").value);
-      const duration = parseInt(document.getElementById("duration").value);
-      const cmd = { dir: direction, speed: speed, time: duration };
-      if (!controlChar) return alert("Not connected");
-      await controlChar.writeValue(new TextEncoder().encode(JSON.stringify(cmd)));
-    }
+    isConnected = false;
+    updateUI('Disconnected', 'Idle', '--');
+  }
 
-    async function stopPump() {
-      if (!controlChar) return alert("Not connected");
-      const cmd = { stop: true };
-      await controlChar.writeValue(new TextEncoder().encode(JSON.stringify(cmd)));
-    }
+  async function startPump() {
+    const speed = parseInt(document.getElementById("speed").value);
+    const duration = parseInt(document.getElementById("duration").value);
+    const cmd = { dir: direction, speed: speed, time: duration };
+    if (!controlChar) return alert("Not connected");
+    await controlChar.writeValue(new TextEncoder().encode(JSON.stringify(cmd)));
+  }
 
-    function handleStatus(event) {
-      const data = new TextDecoder().decode(event.target.value);
-      const json = JSON.parse(data);
-      updateUI('Connected', json.running ? 'Running' : 'Idle', json.remaining);
-    }
+  async function stopPump() {
+    if (!controlChar) return alert("Not connected");
+    const cmd = { stop: true };
+    await controlChar.writeValue(new TextEncoder().encode(JSON.stringify(cmd)));
+  }
 
-    function updateUI(conn, status, remaining) {
-      document.getElementById('connection').textContent = conn;
-      document.getElementById('status').textContent = status;
-      document.getElementById('remaining').textContent = remaining;
+  function handleStatus(event) {
+    const data = new TextDecoder().decode(event.target.value);
+    const json = JSON.parse(data);
+    updateUI('Connected', json.running ? 'Running' : 'Idle', json.remaining);
+  }
 
-      const btn = document.getElementById('connectBtn');
-      if (conn === 'Connected') {
-        btn.classList.add('connected');
-      } else {
-        btn.classList.remove('connected');
-      }
-    }
-  </script>
+  function updateUI(conn, status, remaining) {
+    document.getElementById('connection').textContent = conn;
+    document.getElementById('status').textContent = status;
+    document.getElementById('remaining').textContent = remaining;
+
+    const btn = document.getElementById('connectBtn');
+    btn.classList.toggle('connected', conn === 'Connected');
+    btn.textContent = conn === 'Connected' ? '❌' : '🔌';
+  }
+</script>
+
 </body>
 </html>
